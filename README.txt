@@ -14,7 +14,7 @@ pointed to a inode that indicated to the regular data block.
 In short, we created two new inodes and two new data blocks on top of original
 .c file. The nlink of members inode was 2, while the nlink of root dir was 3.
 
-2.Part
+2.Part2
 In this part, we were asked to finished mount and umount functionalities.
 In order to achieve that, we modified pantryfs_fill_super() function.
 We did have to fill in some of the superblock fields in fill_super(), though.
@@ -30,3 +30,15 @@ was 0 and set inode_mode to be S_IFDIR | 0777. This directory inode must be put
 into the directory cache (by way of a dentry structure), so that the VFS could
 find it. This was done by using d_make_root(root_inode), which at the same time,
 linking the inode with dentry. Finally, sb->s_root was set to be that root_dentry.
+
+3.Part3
+In this part, we add some codes in pantryfs_fill_super and finish pantryfs_iterate
+to associate the root VFS inode with the root PantryFS inode. First, in pantryfs_full_super
+we linked the i_private member in root VFS inode to the i_store_bh member in the
+PantryFS, then set the i_sb, i_op and i_fop menber in VFS using the associating
+PantryFS member. As for pantryfs_iterate, we firstly get the inode number of the
+filp in VFS, then we used dir_emit to obtain the information under the root directory.
+One important thing is that the ino parameter in dir_emit is 1 instead of 0, which because
+in the PantryFS the inode number start with 1 instead of 0, which is different from
+VFS. Using dir_emit for four times, the four submember ".", "..", "hello.txt", "member"
+can be shown. Also we need to set the ending time to stop calling pantryfs_iterate.
