@@ -13,7 +13,31 @@
 
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
-	return -ENOSYS;
+	unsigned long long root_ino_ps;
+
+	root_ino_ps = 1;
+
+	if (ctx->pos == 10)
+		return 0;
+
+	if (!dir_emit(ctx, ".", 1, root_ino_ps, DT_DIR))
+		return 0;
+	ctx->pos++;
+
+	if (!dir_emit(ctx, "..", 2, root_ino_ps, DT_DIR))
+		return 0;
+	ctx->pos++;
+
+	if (!dir_emit(ctx, "hello.txt", 9, root_ino_ps, DT_REG))
+		return 0;
+
+	ctx->pos++;
+	if (!dir_emit(ctx, "members", 7, root_ino_ps, DT_DIR))
+		return 0;
+
+	ctx->pos = 10;
+
+	return 0;
 }
 
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
@@ -113,9 +137,15 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!root_inode)
 		return -EINVAL;
 	root_inode->i_mode = root_mode;
+	root_inode->i_private = pfs_sb_bh->i_store_bh->b_data;
+	root_inode->i_sb = sb;
+	root_inode->i_op = &pantryfs_inode_ops;
+	root_inode->i_fop = &pantryfs_dir_ops;
 
 	/* Link the root dentry with inode */
 	root_dentry = d_make_root(root_inode);
+	if (!root_dentry)
+		return -ENOMEM;
 	sb->s_root = root_dentry;
 
 	return 0;
