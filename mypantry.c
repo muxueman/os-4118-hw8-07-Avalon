@@ -64,7 +64,61 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 
 int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	return -ENOSYS;
+	struct pantryfs_sb_buffer_heads *pfs_sb_bh;
+	struct inode *root_inode;
+	int root_ino;
+	unsigned short root_mode;
+	unsigned long fetch_magic;
+	struct dentry *root_dentry;
+	int ret;
+
+	root_mode = S_IFDIR | 0777;
+	root_ino = 0;
+	pfs_sb_bh = kmalloc(sizeof(struct pantryfs_sb_buffer_heads),
+			GFP_KERNEL);
+	if (!pfs_sb_bh)
+		return -ENOMEM;
+
+	/* Set the b_data of sb_bh and i_store_bh */
+	ret = sb_set_blocksize(sb, PFS_BLOCK_SIZE);
+	if (ret == 0)
+		return -EINVAL;
+	pfs_sb_bh->sb_bh = sb_bread(sb, 0);
+	if (!pfs_sb_bh->sb_bh) {
+		pr_err("sb_bh bread crashed!");
+		return -EINVAL;
+	}
+
+	/* Check if the target file system is pantryfs */
+	fetch_magic = (unsigned long)(((struct pantryfs_super_block *)
+				(pfs_sb_bh->sb_bh->b_data))->magic);
+	if (fetch_magic !=  PANTRYFS_MAGIC_NUMBER) {
+		pr_err("The target fs is not PantryFS!\n");
+		return -EINVAL;
+	}
+
+	pfs_sb_bh->i_store_bh = sb_bread(sb, 1);
+	if (!pfs_sb_bh->i_store_bh) {
+		pr_err("i_store_bh bread crashed!");
+		return -EINVAL;
+	}
+
+	/* Fill the fields of VFS super_block */
+	sb->s_fs_info = pfs_sb_bh;
+	sb->s_magic = PANTRYFS_MAGIC_NUMBER;
+	sb->s_op = &pantryfs_sb_ops;
+
+	/* Create a inode for root dir */
+	root_inode = iget_locked(sb, root_ino);
+	if (!root_inode)
+		return -EINVAL;
+	root_inode->i_mode = root_mode;
+
+	/* Link the root dentry with inode */
+	root_dentry = d_make_root(root_inode);
+	sb->s_root = root_dentry;
+
+	return 0;
 }
 
 static struct dentry *pantryfs_mount(struct file_system_type *fs_type,
