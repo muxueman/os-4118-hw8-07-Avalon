@@ -13,3 +13,20 @@ should pointer to another dir data block containing a dir_entry of names.txt whi
 pointed to a inode that indicated to the regular data block.
 In short, we created two new inodes and two new data blocks on top of original
 .c file. The nlink of members inode was 2, while the nlink of root dir was 3.
+
+2.Part
+In this part, we were asked to finished mount and umount functionalities.
+In order to achieve that, we modified pantryfs_fill_super() function.
+We did have to fill in some of the superblock fields in fill_super(), though.
+The code starts out like this: sb_set_blocksize() to constrain the block size,
+We also used sb->s_magic = PANTRYFS_MAGIC_NUMBER, sb->s_op = &pantryfs_sb_ops,
+and sb->s_fs_info = pfs_sb_bh to indicate sb_bh and i_store_bh. In detail, we
+applied sb_bread(sb, 0) and sb_bread(sb, 1) to read superblock data block and
+inode data block, respectively. In addition, to make sure we mount a filesystem
+that is PantryFS, we checked the magic number in b_data of the buffer head of
+superblock which should be exactly the same as what we defined in pantryfs_sb.h.
+Then, we created the root directory using iget_locked and the parameter root_ino
+was 0 and set inode_mode to be S_IFDIR | 0777. This directory inode must be put
+into the directory cache (by way of a dentry structure), so that the VFS could
+find it. This was done by using d_make_root(root_inode), which at the same time,
+linking the inode with dentry. Finally, sb->s_root was set to be that root_dentry.
