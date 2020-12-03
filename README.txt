@@ -52,3 +52,14 @@ mode(S_IFREG | 0666), sb(parent->i_sb), op(pantryfs_inode_ops), fop(pantryfs_fil
 ops), private attributes(parent->i_private) + new_ino * sizeof(struct pantryfs_inode)).
 Then, we used d_add() to insert the found inode into the dentry.
 In addition, we also modified pantryfs_iterate() to be able to iterate in members dir.
+
+5.Part5
+In this part, we added pantryfs_read().
+First, we should make sure that the length we copy_to_user() was no larger than the
+file length. The method we got access to data: firstly, we got the inode and the
+corresponding data block number from *filp, and then, we got the bh->b_data using
+sb_bread(). The b_data was what we needed, so finally, we used copy_to_user() to read
+data from kernel to buffer. Here we incremented the *ppos-offset by *ppos += count,
+then passed the count number back to the caller. Particularly, when *ppos was larger
+than file_len, we immediately returned 0 in order to finish the read(). In the end, we
+released buffer head by using breles(bh).
