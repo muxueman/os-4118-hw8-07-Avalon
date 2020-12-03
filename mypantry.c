@@ -53,7 +53,42 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 		loff_t *ppos)
 {
-	return -ENOSYS;
+	struct inode *inode;
+	struct super_block *sb;
+	struct buffer_head *bh;
+	struct pantryfs_inode *ps_inode;
+	int data_block_num;
+	unsigned long long file_len;
+
+	/* Get file size and datablock number from inode in PFS */
+	inode = file_inode(filp);
+	sb = inode->i_sb;
+	ps_inode = (struct pantryfs_inode *)(inode->i_private);
+
+	file_len = ps_inode->file_size;
+	data_block_num = ps_inode->data_block_number;
+
+	/* Read the data from the corrisponding datablock */
+	bh = sb_bread(sb, data_block_num);
+	if (!bh)
+		return -EIO;
+
+	/* Validate the len argument */
+	if (*ppos > file_len)
+		return 0;
+	if (len > file_len - *ppos)
+		len = file_len - *ppos;
+
+	/* Copy to user space */
+	if (copy_to_user(buf, bh->b_data + *ppos, len))
+		return -EFAULT;
+
+	brelse(bh);
+
+	/* Update ppos */
+	*ppos += len;
+
+	return len;
 }
 
 int pantryfs_create(struct inode *parent, struct dentry *dentry,
@@ -130,8 +165,12 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		new_inode->i_sb = parent->i_sb;
 		new_inode->i_op = &pantryfs_inode_ops;
 		new_inode->i_fop = file_ops;
-		new_inode->i_private = (parent->i_private) +
+		if (parent->i_ino == 0)
+			new_inode->i_private = (parent->i_private) +
 			new_ino * sizeof(struct pantryfs_inode);
+		else
+			new_inode->i_private = (parent->i_private) +
+			(new_ino - 1) * sizeof(struct pantryfs_inode);
 	}
 
 	d_add(child_dentry, new_inode);
