@@ -13,27 +13,37 @@
 
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
-	unsigned long long root_ino_ps;
+	unsigned long long parent;
+	struct inode *inode;
 
-	root_ino_ps = 1;
+	inode = file_inode(filp);
+	parent = inode->i_ino;
 
 	if (ctx->pos == 10)
 		return 0;
 
-	if (!dir_emit(ctx, ".", 1, root_ino_ps, DT_DIR))
+	if (!dir_emit(ctx, ".", 1, parent + 1, DT_DIR))
 		return 0;
 	ctx->pos++;
 
-	if (!dir_emit(ctx, "..", 2, root_ino_ps, DT_DIR))
+	if (!dir_emit(ctx, "..", 2, parent + 1, DT_DIR))
 		return 0;
 	ctx->pos++;
 
-	if (!dir_emit(ctx, "hello.txt", 9, root_ino_ps, DT_REG))
-		return 0;
+	if (parent == 0) {
+		if (!dir_emit(ctx, "hello.txt", 9, parent + 1, DT_REG))
+			return 0;
+		ctx->pos++;
 
-	ctx->pos++;
-	if (!dir_emit(ctx, "members", 7, root_ino_ps, DT_DIR))
-		return 0;
+		if (!dir_emit(ctx, "members", 7, parent + 1, DT_DIR))
+			return 0;
+		ctx->pos++;
+
+	} else if (parent == 1) {
+		if (!dir_emit(ctx, "names.txt", 9, parent + 1, DT_REG))
+			return 0;
+		ctx->pos++;
+	}
 
 	ctx->pos = 10;
 
@@ -83,6 +93,50 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		*child_dentry, unsigned int flags)
 {
+	int new_ino;
+	struct inode *new_inode;
+	void *file_ops;
+	const char *sub_file_name;
+	unsigned short mode;
+
+	new_ino = -1;
+	new_inode = NULL;
+	sub_file_name = child_dentry->d_name.name;
+
+	if (parent->i_ino == 0) {
+		if (strcmp(sub_file_name, "members") == 0) {
+			new_ino = 1;
+			mode = S_IFDIR | 0777;
+			file_ops = &pantryfs_dir_ops;
+		}
+		if (strcmp(sub_file_name, "hello.txt") == 0) {
+			new_ino = 2;
+			mode = S_IFREG | 0666;
+			file_ops = &pantryfs_file_ops;
+		}
+	}
+
+	if (parent->i_ino == 1) {
+		if (strcmp(sub_file_name, "names.txt") == 0) {
+			new_ino = 3;
+			mode = S_IFREG | 0666;
+			file_ops = &pantryfs_file_ops;
+		}
+	}
+
+	if (new_ino >= 0) {
+		new_inode = iget_locked(parent->i_sb, new_ino);
+		new_inode->i_mode = mode;
+		new_inode->i_sb = parent->i_sb;
+		new_inode->i_op = &pantryfs_inode_ops;
+		new_inode->i_fop = file_ops;
+		new_inode->i_private = (parent->i_private) +
+			new_ino * sizeof(struct pantryfs_inode);
+	}
+
+	d_add(child_dentry, new_inode);
+	pr_info("dentry has been added into dcache\n");
+
 	return NULL;
 }
 
