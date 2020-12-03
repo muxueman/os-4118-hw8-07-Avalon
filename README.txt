@@ -42,3 +42,13 @@ One important thing is that the ino parameter in dir_emit is 1 instead of 0, whi
 in the PantryFS the inode number start with 1 instead of 0, which is different from
 VFS. Using dir_emit for four times, the four submember ".", "..", "hello.txt", "member"
 can be shown. Also we need to set the ending time to stop calling pantryfs_iterate.
+
+4.Part4
+In this part, we mainly implemented the lookup function of inode_operations.
+Lookup function was called when the VFS needed to look up an inode in a parent
+directory. For example, in pantry directory, it looked up hello.txt when strcmp()
+return 0 and called iget_locked() function to create a new inode with corresponding
+mode(S_IFREG | 0666), sb(parent->i_sb), op(pantryfs_inode_ops), fop(pantryfs_file_
+ops), private attributes(parent->i_private) + new_ino * sizeof(struct pantryfs_inode)).
+Then, we used d_add() to insert the found inode into the dentry.
+In addition, we also modified pantryfs_iterate() to be able to iterate in members dir.
