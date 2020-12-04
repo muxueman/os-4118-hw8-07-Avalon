@@ -205,10 +205,10 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 			new_inode->i_fop = &pantryfs_dir_ops;
 		else
 			new_inode->i_fop = &pantryfs_file_ops;
-		
+
 		new_inode->i_private = (void *)ps_inode;
 	}
-	
+
 	/* Add to dcache */
 	d_add(child_dentry, new_inode);
 
