@@ -37,11 +37,13 @@ to associate the root VFS inode with the root PantryFS inode. First, in pantryfs
 we linked the i_private member in root VFS inode to the i_store_bh member in the
 PantryFS, then set the i_sb, i_op and i_fop menber in VFS using the associating
 PantryFS member. As for pantryfs_iterate, we firstly get the inode number of the
-filp in VFS, then we used dir_emit to obtain the information under the root directory.
-One important thing is that the ino parameter in dir_emit is 1 instead of 0, which because
-in the PantryFS the inode number start with 1 instead of 0, which is different from
-VFS. Using dir_emit for four times, the four submember ".", "..", "hello.txt", "member"
-can be shown. Also we need to set the ending time to stop calling pantryfs_iterate.
+filp in VFS, then got the associating data_block_num. So we can use sb_bread() to
+get the buffer head which stored the dentries in current directory, and the b_data
+was what we need. Fisrtly we added "." and "..", then we used a while loop to traverse
+all the dentries under this directory, we used the inode in VFS to find the corresponding
+inode in PantryFS, and moved to the next dentry by increasing the pointer by 1.
+The while loop will end if the dentry.active is 0. Also we need to set the ending pos
+to stop calling pantryfs_iterate.
 
 4.Part4
 In this part, we mainly implemented the lookup function of inode_operations.

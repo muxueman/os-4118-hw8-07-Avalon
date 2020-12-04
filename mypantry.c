@@ -13,14 +13,25 @@
 
 int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 {
-	unsigned long long parent;
+	unsigned long long parent, data_block_num, ps_inode_no;
 	struct inode *inode;
+	struct buffer_head *bh;
+	struct pantryfs_dir_entry *ps_dir_entry;
+	struct pantryfs_inode *ps_inode;
 
 	inode = file_inode(filp);
 	parent = inode->i_ino;
+	data_block_num = ((struct pantryfs_inode *)
+		(inode->i_private))->data_block_number;
 
 	if (ctx->pos == 10)
 		return 0;
+
+	bh = sb_bread(inode->i_sb, data_block_num);
+	if (!bh)
+		return -EINVAL;
+
+	ps_dir_entry = (struct pantryfs_dir_entry *)(bh->b_data);
 
 	if (!dir_emit(ctx, ".", 1, parent + 1, DT_DIR))
 		return 0;
@@ -30,20 +41,26 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 		return 0;
 	ctx->pos++;
 
-	if (parent == 0) {
-		if (!dir_emit(ctx, "hello.txt", 9, parent + 1, DT_REG))
-			return 0;
-		ctx->pos++;
+	while (true) {
+		if (ps_dir_entry->active == 0)
+			break;
+		ps_inode_no = ps_dir_entry->inode_no;
+		ps_inode = (struct pantryfs_inode *)
+			(inode->i_sb->s_root->d_inode->i_private) +
+			(ps_inode_no - PANTRYFS_ROOT_INODE_NUMBER);
 
-		if (!dir_emit(ctx, "members", 7, parent + 1, DT_DIR))
+		if (!dir_emit(ctx, ps_dir_entry->filename,
+					PANTRYFS_FILENAME_BUF_SIZE,
+					parent + 1,
+					(ps_inode->mode) >> 12)) {
+			brelse(bh);
 			return 0;
-		ctx->pos++;
-
-	} else if (parent == 1) {
-		if (!dir_emit(ctx, "names.txt", 9, parent + 1, DT_REG))
-			return 0;
+		}
+		ps_dir_entry += 1;
 		ctx->pos++;
 	}
+
+	brelse(bh);
 
 	ctx->pos = 10;
 
@@ -53,6 +70,7 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 		loff_t *ppos)
 {
+	return -ENOSYS;
 	struct inode *inode;
 	struct super_block *sb;
 	struct buffer_head *bh;
@@ -128,6 +146,7 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		*child_dentry, unsigned int flags)
 {
+	return NULL;
 	int new_ino;
 	struct inode *new_inode;
 	void *file_ops;
