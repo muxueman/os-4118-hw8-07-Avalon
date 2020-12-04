@@ -75,7 +75,6 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 		loff_t *ppos)
 {
-	return -ENOSYS;
 	struct inode *inode;
 	struct super_block *sb;
 	struct buffer_head *bh;
