@@ -48,7 +48,9 @@ to stop calling pantryfs_iterate.
 4.Part4
 In this part, we mainly implemented the lookup function of inode_operations.
 Lookup function was called when the VFS needed to look up an inode in a parent
-directory. For example, in pantry directory, it looked up hello.txt when strcmp()
+directory. We used the similar while loop like part3 to find the determined subdirs.
+We set new_ino to be -1 and new_inode to be NULL. If we didn't anything, we would d_add()
+NULL. In detail, for example, in pantry directory, it looked up hello.txt when strcmp()
 return 0 and called iget_locked() function to create a new inode with corresponding
 mode(S_IFREG | 0666), sb(parent->i_sb), op(pantryfs_inode_ops), fop(pantryfs_file_
 ops), private attributes(parent->i_private) + new_ino * sizeof(struct pantryfs_inode)).
