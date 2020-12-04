@@ -155,7 +155,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 	struct inode *new_inode;
 	struct buffer_head *bh;
 	const char *sub_file_name;
-	unsigned short mode;
 	struct pantryfs_dir_entry *ps_dir_entry;
 	struct pantryfs_inode *ps_inode;
 
@@ -184,7 +183,6 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 			ps_inode = (struct pantryfs_inode *)
 				(parent->i_sb->s_root->d_inode->i_private) +
 				(ps_inode_no - PANTRYFS_ROOT_INODE_NUMBER);
-			mode = ps_inode->mode;
 
 			break;
 		}
@@ -197,13 +195,23 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 	/* Create the new inode for VFS */
 	if (new_ino > 0) {
 		new_inode = iget_locked(parent->i_sb, new_ino);
-		new_inode->i_mode = mode;
+		new_inode->i_mode = ps_inode->mode;
 		new_inode->i_sb = parent->i_sb;
 		new_inode->i_op = &pantryfs_inode_ops;
-		if (mode >> 12 == DT_DIR)
+		new_inode->i_atime = ps_inode->i_atime;
+		new_inode->i_mtime = ps_inode->i_mtime;
+		new_inode->i_ctime = ps_inode->i_ctime;
+		new_inode->i_size = ps_inode->file_size;
+		set_nlink(new_inode, ps_inode->nlink);
+		new_inode->i_uid.val = ps_inode->uid;
+		new_inode->i_gid.val = ps_inode->gid;
+		if ((ps_inode->mode) >> 12 == DT_DIR) {
+			new_inode->i_size = PFS_BLOCK_SIZE;
 			new_inode->i_fop = &pantryfs_dir_ops;
-		else
+		} else {
+			new_inode->i_size = ps_inode->file_size;
 			new_inode->i_fop = &pantryfs_file_ops;
+		}
 
 		new_inode->i_private = (void *)ps_inode;
 	}
@@ -269,6 +277,9 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	root_inode->i_sb = sb;
 	root_inode->i_op = &pantryfs_inode_ops;
 	root_inode->i_fop = &pantryfs_dir_ops;
+	root_inode->i_size = PFS_BLOCK_SIZE;
+	set_nlink(root_inode, ((struct pantryfs_inode *)
+			(root_inode->i_private))->nlink);
 
 	/* Link the root dentry with inode */
 	root_dentry = d_make_root(root_inode);

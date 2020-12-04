@@ -67,3 +67,9 @@ data from kernel to buffer. Here we incremented the *ppos-offset by *ppos += cou
 then passed the count number back to the caller. Particularly, when *ppos was larger
 than file_len, we immediately returned 0 in order to finish the read(). In the end, we
 released buffer head by using breles(bh).
+
+6.Part6
+In this part, we added some parameters from pantryfs to VFS, such as size, link count,
+timestamps, permissions, owner, and group, to make sure that we got exactlly the same
+"stat" command result as module of ref/pantryfs.ko. We tested and passed all other
+stress tests mentioned in the task requirments.
