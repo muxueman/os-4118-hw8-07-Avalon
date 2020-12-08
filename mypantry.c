@@ -124,11 +124,143 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 int pantryfs_create(struct inode *parent, struct dentry *dentry,
 		umode_t mode, bool excl)
 {
-	return -ENOSYS;
+	int new_data_block_num, new_ps_inode_num, new_vfs_inode_num,
+	    ps_dentry_data_block_num, i;
+	struct super_block *sb;
+	struct inode *new_vfs_inode;
+	struct pantryfs_inode *new_ps_inode;
+	struct pantryfs_dir_entry *ps_dentry;
+	struct buffer_head *bh_sb, *bh_i_store, *bh_ps_dentry;
+	struct pantryfs_super_block *ps_sb;
+	bool db_flag, inode_flag, is_dir;
+	struct timespec64 ts64;
+
+	sb = parent->i_sb;
+	db_flag = inode_flag = false;
+
+	/* Check if we are creating a directory */
+	if (mode >> 12 == DT_DIR)
+		is_dir = true;
+	else
+		is_dir = false;
+
+	/* SETBIT for new datablock and new inodes in PS */
+	bh_sb = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!bh_sb)
+		return -EIO;
+
+	ps_sb = (struct pantryfs_super_block *)(bh_sb->b_data);
+
+	for (i = 0; i < PFS_MAX_INODES; i++) {
+		if (!db_flag && !IS_SET(ps_sb->free_data_blocks, i)) {
+			SETBIT(ps_sb->free_data_blocks, i);
+			new_data_block_num = i +
+				PANTRYFS_ROOT_DATABLOCK_NUMBER;
+			db_flag = true;
+		}
+		if (!inode_flag && !IS_SET(ps_sb->free_inodes, i)) {
+			SETBIT(ps_sb->free_inodes, i);
+			new_ps_inode_num = i +
+				PANTRYFS_ROOT_INODE_NUMBER;
+			inode_flag = true;
+		}
+		if (inode_flag && db_flag)
+			break;
+	}
+
+	/* No empty space in PantryFS */
+	if (i == PFS_MAX_INODES)
+		return -EIO;
+
+	/* Initialize the new pantryfs inode */
+	bh_i_store = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!bh_i_store)
+		return -EIO;
+
+	new_ps_inode = ((struct pantryfs_inode *)(bh_i_store->b_data)) +
+		new_ps_inode_num - PANTRYFS_ROOT_INODE_NUMBER;
+	memset(new_ps_inode, 0, sizeof(struct pantryfs_inode));
+	ktime_get_coarse_real_ts64(&ts64);
+	new_ps_inode->i_atime = new_ps_inode->i_mtime =
+		new_ps_inode->i_ctime = ts64;
+	new_ps_inode->uid = 1000;
+	new_ps_inode->gid = 100;
+	new_ps_inode->nlink = 1;
+	new_ps_inode->mode = mode;
+	new_ps_inode->data_block_number = new_data_block_num;
+	if (is_dir)
+		new_ps_inode->file_size = PFS_BLOCK_SIZE;
+
+	/* Initialize the new ps dentry */
+	ps_dentry_data_block_num = ((struct pantryfs_inode *)
+		(parent->i_private))->data_block_number;
+	bh_ps_dentry = sb_bread(sb, ps_dentry_data_block_num);
+	if (!bh_ps_dentry)
+		return -EIO;
+
+	ps_dentry = (struct pantryfs_dir_entry *)
+		(bh_ps_dentry->b_data);
+	while (ps_dentry->active == 1)
+		ps_dentry++;
+
+	ps_dentry->active = 1;
+	ps_dentry->inode_no = new_ps_inode_num;
+	strncpy(ps_dentry->filename, dentry->d_name.name,
+			sizeof(ps_dentry->filename));
+
+	/* Create VFS inode and fill in the info */
+	new_vfs_inode_num = new_ps_inode_num -
+		PANTRYFS_ROOT_INODE_NUMBER;
+	new_vfs_inode = iget_locked(sb, new_vfs_inode_num);
+	new_vfs_inode->i_mode = new_ps_inode->mode;
+	new_vfs_inode->i_sb = sb;
+	new_vfs_inode->i_op = &pantryfs_inode_ops;
+	new_vfs_inode->i_atime = new_ps_inode->i_atime;
+	new_vfs_inode->i_mtime = new_ps_inode->i_mtime;
+	new_vfs_inode->i_ctime = new_ps_inode->i_ctime;
+	new_vfs_inode->i_size = new_ps_inode->file_size;
+	set_nlink(new_vfs_inode, new_ps_inode->nlink);
+	new_vfs_inode->i_uid.val = new_ps_inode->uid;
+	new_vfs_inode->i_gid.val = new_ps_inode->gid;
+	if (is_dir)
+		new_vfs_inode->i_fop = &pantryfs_dir_ops;
+	else
+		new_vfs_inode->i_fop = &pantryfs_file_ops;
+
+	new_vfs_inode->i_private = (void *)
+		((struct pantryfs_inode *)
+		 (sb->s_root->d_inode->i_private) +
+		 (new_ps_inode_num -
+		  PANTRYFS_ROOT_INODE_NUMBER));
+
+	unlock_new_inode(new_vfs_inode);
+
+	/* Add to dcache */
+	d_add(dentry, new_vfs_inode);
+
+	/* update to disk */
+	mark_buffer_dirty(bh_sb);
+	mark_buffer_dirty(bh_i_store);
+	mark_buffer_dirty(bh_ps_dentry);
+	sync_dirty_buffer(bh_sb);
+	sync_dirty_buffer(bh_i_store);
+	sync_dirty_buffer(bh_ps_dentry);
+	brelse(bh_sb);
+	brelse(bh_i_store);
+	brelse(bh_ps_dentry);
+
+	/* Update the nlink for the parent */
+	if (is_dir) {
+		set_nlink(parent, parent->i_nlink + 1);
+		mark_inode_dirty(parent);
+	}
+
+	return 0;
 }
 
 int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 {
+	pr_info("unlink called\n");
 	return -ENOSYS;
 }
 

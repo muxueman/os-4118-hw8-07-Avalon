@@ -89,3 +89,14 @@ In the write_inode(), we created a new buffer head and used sb_bread() to find t
 that stored the inode information and then updated them, including mode, i_mtime, i_atime,
 file_size, nlink, uid and gid. Also we need to mark the buffer head as dirty and add
 sync_dirty_buffer() to fix the fsync() failing problem.
+
+8.Part8
+In this part, we combined what had already learned from the previous parts.
+First, we needed to find corresponding numbers of free data blocks and free inodes to
+store our new created files. We implemented this by checking IS_SET(superblock->free_
+data_blocks/free_inodes, i). Then, we shall create new pantryfs_inode. The dentry of
+this inode should also be added to its parent_dir_entry. So, we used sb_bread(sb, ((
+struct pantryfs_inode *)(parent->i_private))->data_block_number) to find the stored
+dentries in that parent dir and followed by new file dentry. We almost done with pantryfs
+part and finally, created VFS inode, and unlinked it with pantryfs_dentry. We made sure
+that all changes to be written back to disk using mark_buffer_dirty().
