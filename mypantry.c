@@ -75,20 +75,26 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 		loff_t *ppos)
 {
+	return -ENOSYS;
 	struct inode *inode;
 	struct super_block *sb;
 	struct buffer_head *bh;
 	struct pantryfs_inode *ps_inode;
 	int data_block_num;
 	unsigned long long file_len;
+	struct timespec64 ts64;
 
 	/* Get file size and datablock number from inode in PFS */
 	inode = file_inode(filp);
 	sb = inode->i_sb;
 	ps_inode = (struct pantryfs_inode *)(inode->i_private);
 
-	file_len = ps_inode->file_size;
+	file_len = inode->i_size;
 	data_block_num = ps_inode->data_block_number;
+
+	/* Update access time */
+	ktime_get_coarse_real_ts64(&ts64);
+	inode->i_atime = ts64;
 
 	/* Read the data from the corrisponding datablock */
 	bh = sb_bread(sb, data_block_num);
@@ -105,6 +111,9 @@ ssize_t pantryfs_read(struct file *filp, char __user *buf, size_t len,
 	if (copy_to_user(buf, bh->b_data + *ppos, len))
 		return -EFAULT;
 
+	mark_inode_dirty(inode);
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
 	brelse(bh);
 
 	/* Update ppos */
@@ -127,6 +136,30 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
 	return -ENOSYS;
+	struct pantryfs_inode *ps_inode;
+	struct buffer_head *bh;
+
+	bh = sb_bread(inode->i_sb,
+			PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!bh)
+		return -EIO;
+
+	ps_inode = (struct pantryfs_inode *)(bh->b_data)
+		+ inode->i_ino;
+	/* Update inode's information */
+	ps_inode->mode = inode->i_mode;
+	ps_inode->i_mtime = inode->i_mtime;
+	ps_inode->i_atime = inode->i_atime;
+	ps_inode->file_size = inode->i_size;
+	ps_inode->nlink = inode->i_nlink;
+	ps_inode->uid = inode->i_uid.val;
+	ps_inode->gid = inode->i_gid.val;
+
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
+	brelse(bh);
+
+	return 0;
 }
 
 void pantryfs_evict_inode(struct inode *inode)
@@ -145,11 +178,59 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 		loff_t *ppos)
 {
 	return -ENOSYS;
+	struct inode *vfs_inode;
+	struct pantryfs_inode *ps_inode;
+	struct buffer_head *bh;
+	int data_block_num;
+	struct timespec64 ts64;
+
+	vfs_inode = file_inode(filp);
+	ps_inode = (struct pantryfs_inode *)
+		(vfs_inode->i_private);
+	data_block_num = ps_inode->data_block_number;
+
+	/* Update access time */
+	ktime_get_coarse_real_ts64(&ts64);
+	vfs_inode->i_atime = ts64;
+
+	/* Read contents from corrisponding datablock */
+	bh = sb_bread(vfs_inode->i_sb, data_block_num);
+	if (!bh)
+		return -EIO;
+
+	/* Validate the len argument */
+	if (*ppos > PFS_BLOCK_SIZE)
+		return 0;
+	if (len > PFS_BLOCK_SIZE - *ppos)
+		len = PFS_BLOCK_SIZE - *ppos;
+
+	/* Update the vfs inode */
+	vfs_inode->i_mtime = ts64;
+	vfs_inode->i_size = *ppos + len;
+
+	/*Mark this inode as dirty */
+	mark_inode_dirty(vfs_inode);
+
+	/* Copy from user space */
+	if (copy_from_user((bh->b_data) + *ppos, buf, len))
+		return -EFAULT;
+
+	/* Update ppos */
+	*ppos = *ppos + len;
+
+	//pantryfs_write_inode(vfs_inode, NULL);
+
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
+	brelse(bh);
+
+	return len;
 }
 
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		*child_dentry, unsigned int flags)
 {
+	return -ENOSYS;
 	unsigned long long data_block_num, ps_inode_no;
 	int new_ino;
 	struct inode *new_inode;
@@ -167,7 +248,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 
 	bh = sb_bread(parent->i_sb, data_block_num);
 	if (!bh)
-		return -EINVAL;
+		return -EIO;
 
 	ps_dir_entry = (struct pantryfs_dir_entry *)(bh->b_data);
 
@@ -214,6 +295,8 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		}
 
 		new_inode->i_private = (void *)ps_inode;
+
+		unlock_new_inode(new_inode);
 	}
 
 	/* Add to dcache */
@@ -246,7 +329,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	pfs_sb_bh->sb_bh = sb_bread(sb, 0);
 	if (!pfs_sb_bh->sb_bh) {
 		pr_err("sb_bh bread crashed!");
-		return -EINVAL;
+		return -EIO;
 	}
 
 	/* Check if the target file system is pantryfs */
@@ -260,7 +343,7 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	pfs_sb_bh->i_store_bh = sb_bread(sb, 1);
 	if (!pfs_sb_bh->i_store_bh) {
 		pr_err("i_store_bh bread crashed!");
-		return -EINVAL;
+		return -EIO;
 	}
 
 	/* Fill the fields of VFS super_block */
@@ -286,6 +369,8 @@ int pantryfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!root_dentry)
 		return -ENOMEM;
 	sb->s_root = root_dentry;
+
+	unlock_new_inode(root_inode);
 
 	return 0;
 }
