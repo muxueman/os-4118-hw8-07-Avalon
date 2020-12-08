@@ -230,7 +230,6 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		*child_dentry, unsigned int flags)
 {
-	return -ENOSYS;
 	unsigned long long data_block_num, ps_inode_no;
 	int new_ino;
 	struct inode *new_inode;
