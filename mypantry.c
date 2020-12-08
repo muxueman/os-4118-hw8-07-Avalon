@@ -134,7 +134,6 @@ int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 
 int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 {
-	return -ENOSYS;
 	struct pantryfs_inode *ps_inode;
 	struct buffer_head *bh;
 
@@ -170,13 +169,12 @@ void pantryfs_evict_inode(struct inode *inode)
 
 int pantryfs_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
 {
-	return -ENOSYS;
+	return 0;
 }
 
 ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 		loff_t *ppos)
 {
-	return -ENOSYS;
 	struct inode *vfs_inode;
 	struct pantryfs_inode *ps_inode;
 	struct buffer_head *bh;

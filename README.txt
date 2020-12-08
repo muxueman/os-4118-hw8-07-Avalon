@@ -73,3 +73,19 @@ In this part, we added some parameters from pantryfs to VFS, such as size, link 
 timestamps, permissions, owner, and group, to make sure that we got exactlly the same
 "stat" command result as module of ref/pantryfs.ko. We tested and passed all other
 stress tests mentioned in the task requirments.
+
+7.Part7
+In this part, we added pantryfs_write() and write_inode() to complete the overwriting
+function. In the pantryfs_write(), first we got the vfs inode by the given filp, then
+got the pfs inode by i_private, so we could have the data block number. Then we created
+a buffer head to read contents from the corresponding data block. We need to validated the
+len argument so that we could update the file size, also there were some other variables
+we updated such as access time and modified time. We used copy_from_user() to added the
+new content in buf to the opened file. In the end, we updated *ppos and marked the inode
+and the buffer head as dirty, so the vfs will call write_inode() and write the changing
+back to the disk. What's more we must added sync_dirty_buffer() so that our pfs can use
+vim to edit our files.
+In the write_inode(), we created a new buffer head and used sb_bread() to find the block
+that stored the inode information and then updated them, including mode, i_mtime, i_atime,
+file_size, nlink, uid and gid. Also we need to mark the buffer head as dirty and add
+sync_dirty_buffer() to fix the fsync() failing problem.
