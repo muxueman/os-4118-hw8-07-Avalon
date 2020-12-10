@@ -18,9 +18,11 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 	struct buffer_head *bh;
 	struct pantryfs_dir_entry *ps_dir_entry;
 	struct pantryfs_inode *ps_inode;
+	int loop_counter;
 
 	inode = file_inode(filp);
 	parent = inode->i_ino;
+	loop_counter = 0;
 	data_block_num = ((struct pantryfs_inode *)
 		(inode->i_private))->data_block_number;
 
@@ -46,9 +48,14 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 
 	/* Traverse the datablock to retrieve all the entries under */
 	/* this directroy */
-	while (true) {
-		if (ps_dir_entry->active == 0)
-			break;
+	while (loop_counter < (PFS_BLOCK_SIZE /
+				sizeof(struct pantryfs_dir_entry))) {
+		if (ps_dir_entry->active == 0) {
+			ps_dir_entry += 1;
+			loop_counter++;
+			ctx->pos++;
+			continue;
+		}
 		ps_inode_no = ps_dir_entry->inode_no;
 		ps_inode = (struct pantryfs_inode *)
 			(inode->i_sb->s_root->d_inode->i_private) +
@@ -62,11 +69,10 @@ int pantryfs_iterate(struct file *filp, struct dir_context *ctx)
 			return 0;
 		}
 		ps_dir_entry += 1;
+		loop_counter++;
 		ctx->pos++;
 	}
-
 	brelse(bh);
-
 	ctx->pos = 10;
 
 	return 0;
@@ -125,7 +131,7 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 		umode_t mode, bool excl)
 {
 	int new_data_block_num, new_ps_inode_num, new_vfs_inode_num,
-	    ps_dentry_data_block_num, i;
+	    ps_dentry_data_block_num, loop_counter, i;
 	struct super_block *sb;
 	struct inode *new_vfs_inode;
 	struct pantryfs_inode *new_ps_inode;
@@ -137,6 +143,26 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 
 	sb = parent->i_sb;
 	db_flag = inode_flag = false;
+	loop_counter = 0;
+
+	/* Initialize the new ps dentry */
+	ps_dentry_data_block_num = ((struct pantryfs_inode *)
+		(parent->i_private))->data_block_number;
+	bh_ps_dentry = sb_bread(sb, ps_dentry_data_block_num);
+	if (!bh_ps_dentry)
+		return -EIO;
+
+	ps_dentry = (struct pantryfs_dir_entry *)
+		(bh_ps_dentry->b_data);
+	while (loop_counter < PFS_MAX_CHILDREN &&
+			ps_dentry->active == 1) {
+		loop_counter++;
+		ps_dentry++;
+	}
+
+	/* Children are full */
+	if (loop_counter == PFS_MAX_CHILDREN)
+		return -EIO;
 
 	/* Check if we are creating a directory */
 	if (mode >> 12 == DT_DIR)
@@ -172,6 +198,11 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 	if (i == PFS_MAX_INODES)
 		return -EIO;
 
+	/* Fill in the ps dentry */
+	ps_dentry->active = 1;
+	ps_dentry->inode_no = new_ps_inode_num;
+	strncpy(ps_dentry->filename, dentry->d_name.name,
+			sizeof(ps_dentry->filename));
 	/* Initialize the new pantryfs inode */
 	bh_i_store = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
 	if (!bh_i_store)
@@ -179,7 +210,6 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 
 	new_ps_inode = ((struct pantryfs_inode *)(bh_i_store->b_data)) +
 		new_ps_inode_num - PANTRYFS_ROOT_INODE_NUMBER;
-	memset(new_ps_inode, 0, sizeof(struct pantryfs_inode));
 	ktime_get_coarse_real_ts64(&ts64);
 	new_ps_inode->i_atime = new_ps_inode->i_mtime =
 		new_ps_inode->i_ctime = ts64;
@@ -190,23 +220,6 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 	new_ps_inode->data_block_number = new_data_block_num;
 	if (is_dir)
 		new_ps_inode->file_size = PFS_BLOCK_SIZE;
-
-	/* Initialize the new ps dentry */
-	ps_dentry_data_block_num = ((struct pantryfs_inode *)
-		(parent->i_private))->data_block_number;
-	bh_ps_dentry = sb_bread(sb, ps_dentry_data_block_num);
-	if (!bh_ps_dentry)
-		return -EIO;
-
-	ps_dentry = (struct pantryfs_dir_entry *)
-		(bh_ps_dentry->b_data);
-	while (ps_dentry->active == 1)
-		ps_dentry++;
-
-	ps_dentry->active = 1;
-	ps_dentry->inode_no = new_ps_inode_num;
-	strncpy(ps_dentry->filename, dentry->d_name.name,
-			sizeof(ps_dentry->filename));
 
 	/* Create VFS inode and fill in the info */
 	new_vfs_inode_num = new_ps_inode_num -
@@ -260,8 +273,35 @@ int pantryfs_create(struct inode *parent, struct dentry *dentry,
 
 int pantryfs_unlink(struct inode *dir, struct dentry *dentry)
 {
-	pr_info("unlink called\n");
-	return -ENOSYS;
+	struct pantryfs_dir_entry *ps_dir_entry;
+	struct inode *vfs_inode;
+	struct super_block *sb;
+	int ps_dentry_db_no, ps_inode_no;
+	struct buffer_head *ps_dentry_bh;
+
+	sb = dir->i_sb;
+	ps_dentry_db_no = ((struct pantryfs_inode *)
+			(dir->i_private))->data_block_number;
+	vfs_inode = dentry->d_inode;
+
+	/* Look for the corrisponding pantryfs dentry and */
+	/* clear it */
+	ps_dentry_bh = sb_bread(sb, ps_dentry_db_no);
+	if (!ps_dentry_bh)
+		return -EIO;
+
+	ps_dir_entry = (struct pantryfs_dir_entry *)
+		(ps_dentry_bh->b_data);
+	while (strcmp(ps_dir_entry->filename,
+				dentry->d_name.name) != 0)
+		ps_dir_entry++;
+
+	ps_inode_no = ps_dir_entry->inode_no;
+	memset(ps_dir_entry, 0, sizeof(struct pantryfs_dir_entry));
+
+	drop_nlink(vfs_inode);
+
+	return 0;
 }
 
 int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
@@ -276,6 +316,7 @@ int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 	ps_inode = (struct pantryfs_inode *)(bh->b_data)
 		+ inode->i_ino;
+
 	/* Update inode's information */
 	ps_inode->mode = inode->i_mode;
 	ps_inode->i_mtime = inode->i_mtime;
@@ -294,9 +335,58 @@ int pantryfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 
 void pantryfs_evict_inode(struct inode *inode)
 {
+	struct super_block *sb;
+	struct pantryfs_super_block *ps_sb;
+	struct buffer_head *i_store_bh, *content_bh, *ps_sb_bh;
+	struct pantryfs_inode *ps_inode;
+	int ps_inode_no, vfs_inode_no, ps_db_no;
+
+	sb = inode->i_sb;
+	vfs_inode_no = inode->i_ino;
+	ps_inode_no = vfs_inode_no + PANTRYFS_ROOT_INODE_NUMBER;
+
 	/* Required to be called by VFS. If not called, evict() will BUG out.*/
 	truncate_inode_pages_final(&inode->i_data);
 	clear_inode(inode);
+
+	/* Look for the corrsiponding pantryfs inode and clear it */
+	i_store_bh = sb_bread(sb, PANTRYFS_INODE_STORE_DATABLOCK_NUMBER);
+	if (!i_store_bh)
+		return;
+
+	ps_inode = ((struct pantryfs_inode *)(i_store_bh->b_data))
+		+ ps_inode_no - PANTRYFS_ROOT_INODE_NUMBER;
+	ps_db_no = ps_inode->data_block_number;
+	memset(ps_inode, 0, sizeof(struct pantryfs_inode));
+
+	/* Clear the content datablock */
+	content_bh = sb_bread(sb, ps_db_no);
+	if (!content_bh)
+		return;
+
+	memset(content_bh->b_data, 0, PFS_BLOCK_SIZE);
+
+	/* Clear bit for ps superblock */
+	ps_sb_bh = sb_bread(sb, PANTRYFS_SUPERBLOCK_DATABLOCK_NUMBER);
+	if (!ps_sb_bh)
+		return;
+
+	ps_sb = (struct pantryfs_super_block *)(ps_sb_bh->b_data);
+	CLEARBIT(ps_sb->free_inodes,
+			ps_inode_no - PANTRYFS_ROOT_INODE_NUMBER);
+	CLEARBIT(ps_sb->free_data_blocks,
+			ps_db_no - PANTRYFS_ROOT_DATABLOCK_NUMBER);
+
+	/* Update the disk */
+	mark_buffer_dirty(i_store_bh);
+	mark_buffer_dirty(content_bh);
+	mark_buffer_dirty(ps_sb_bh);
+	sync_dirty_buffer(i_store_bh);
+	sync_dirty_buffer(content_bh);
+	sync_dirty_buffer(ps_sb_bh);
+	brelse(i_store_bh);
+	brelse(content_bh);
+	brelse(ps_sb_bh);
 }
 
 int pantryfs_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
@@ -347,8 +437,6 @@ ssize_t pantryfs_write(struct file *filp, const char __user *buf, size_t len,
 	/* Update ppos */
 	*ppos = *ppos + len;
 
-	//pantryfs_write_inode(vfs_inode, NULL);
-
 	mark_buffer_dirty(bh);
 	sync_dirty_buffer(bh);
 	brelse(bh);
@@ -360,7 +448,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		*child_dentry, unsigned int flags)
 {
 	unsigned long long data_block_num, ps_inode_no;
-	int new_ino;
+	int new_ino, loop_counter;
 	struct inode *new_inode;
 	struct buffer_head *bh;
 	const char *sub_file_name;
@@ -369,6 +457,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 
 	/* Get sub file name and data block number */
 	new_ino = -1;
+	loop_counter = 0;
 	new_inode = NULL;
 	sub_file_name = child_dentry->d_name.name;
 	data_block_num = ((struct pantryfs_inode *)
@@ -382,9 +471,13 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 
 	/* Traverse the datablock to get the dir_entry with */
 	/* the same name */
-	while (true) {
-		if (ps_dir_entry->active == 0)
-			break;
+	while (loop_counter < (PFS_BLOCK_SIZE /
+				sizeof(struct pantryfs_dir_entry))) {
+		if (ps_dir_entry->active == 0) {
+			ps_dir_entry += 1;
+			loop_counter++;
+			continue;
+		}
 
 		if (strcmp(sub_file_name, ps_dir_entry->filename) == 0) {
 			ps_inode_no = ps_dir_entry->inode_no;
@@ -397,6 +490,7 @@ struct dentry *pantryfs_lookup(struct inode *parent, struct dentry
 		}
 
 		ps_dir_entry += 1;
+		loop_counter++;
 	}
 
 	brelse(bh);

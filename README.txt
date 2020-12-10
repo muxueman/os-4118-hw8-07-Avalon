@@ -100,3 +100,12 @@ struct pantryfs_inode *)(parent->i_private))->data_block_number) to find the sto
 dentries in that parent dir and followed by new file dentry. We almost done with pantryfs
 part and finally, created VFS inode, and unlinked it with pantryfs_dentry. We made sure
 that all changes to be written back to disk using mark_buffer_dirty().
+
+9.Part9
+In this part, we deleted a file by implemented unlink() and evict_inode().
+First, in the unlink() function, we read the pantryfs dentry and clear it by using memset
+marco. Then we reduced the nlink in vfs inode by calling drop_nlink() function. If the
+nlink value reaches zero, the VFS will call evict() automatically.
+In pantryfs_evict(), we cleared the pantryfs inode as well as the datablock storing the
+file content by calling memset marco. Besides, we used CLEARBIT marco to let the pantryfs
+superblock know that the datablock and inode can be used again.
